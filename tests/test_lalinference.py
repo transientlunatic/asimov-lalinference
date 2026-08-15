@@ -1,8 +1,10 @@
 """Tests for asimov_lalinference.lalinference."""
 
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -395,6 +397,42 @@ class TestLALInferenceSubmitDag(unittest.TestCase):
         self.mock_scheduler.submit_dag.side_effect = FileNotFoundError("no dag")
         with self.assertRaises(PipelineException):
             self.pipeline.submit_dag(dryrun=False)
+
+
+class TestLALInferenceSubmitDagRestoresCwd(unittest.TestCase):
+    """Regression test for a real bug found via the e2e test: submit_dag()
+    used to call `os.chdir(self.production.rundir)` *before* entering
+    `with set_directory(self.production.rundir):`. set_directory saves
+    whatever the cwd was on entry and restores it on exit -- but since the
+    preceding manual os.chdir had already moved into rundir, "on entry"
+    was already rundir, so the process was permanently left inside rundir
+    after submit_dag() returned. In the real CLI this broke asimov's own
+    post-submit condor.CondorJobList() refresh, which does a relative-path
+    open of ".asimov/_cache_jobs.yaml" and expects cwd to still be the
+    project root. Uses the *real* set_directory (unlike
+    TestLALInferenceSubmitDag above, which mocks it out and so cannot
+    catch this class of bug).
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
+        self.rundir = os.path.join(self.tmpdir, "rundir")
+        os.makedirs(self.rundir)
+
+        self.production = make_production(rundir=self.rundir)
+        self.pipeline = LALInference(self.production)
+        self.mock_scheduler = MagicMock()
+        self.mock_scheduler.submit_dag.return_value = 42
+        self.pipeline._scheduler = self.mock_scheduler
+
+    def test_cwd_restored_after_submit(self):
+        origin = os.getcwd()
+        try:
+            self.pipeline.submit_dag(dryrun=False)
+            self.assertEqual(os.getcwd(), origin)
+        finally:
+            os.chdir(origin)
 
 
 # ---------------------------------------------------------------------------
