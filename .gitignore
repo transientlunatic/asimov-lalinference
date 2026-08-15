@@ -1,0 +1,8 @@
+.pytest*
+*.egg*
+docs/_*
+*.log
+__pycache__/
+dist/*
+htmlcov/
+.coverage
