@@ -1,0 +1,294 @@
+name: End-to-end test (real lalinference_pipe)
+
+on:
+  push:
+    branches: ['**']
+    tags: ['*']
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: "LALInference end-to-end test (HTCondor)"
+    runs-on: ubuntu-latest
+    container:
+      image: htcondor/mini:latest
+      options: --privileged
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: etive-io/actions/setup-htcondor@v1
+
+      - name: Install base tools
+        run: |
+          yum install -y sudo git
+
+      - name: Create submit user
+        uses: etive-io/actions/create-submit-user@v1
+
+      - name: Ensure submituser can access workspace
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/e2e_project"
+          chmod -R a+rwX "$GITHUB_WORKSPACE"
+
+      - name: Setup asimov-lalinference Environment
+        uses: ./.github/actions/setup-lalinference-env
+        with:
+          python-version: "3.11"
+
+      - name: Set up git
+        run: |
+          su - submituser <<SUBMITUSER
+          set -euo pipefail
+          git config --global init.defaultBranch master
+          git config --global user.email "you@example.com"
+          git config --global user.name "Your Name"
+          SUBMITUSER
+
+      - name: Create asimov project
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: cd e2e_project && asimov init "E2E Test Project"
+
+      - name: Configure asimov environment and condor user
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: |
+            cd e2e_project
+            if [ -z "$CONDA_PREFIX" ] || [ ! -x "$CONDA_PREFIX/bin/lalinference_pipe" ]; then
+              echo "::error::CONDA_PREFIX ('$CONDA_PREFIX') does not contain bin/lalinference_pipe" >&2
+              exit 1
+            fi
+            asimov configuration update pipelines/environment "$CONDA_PREFIX"
+            asimov configuration update condor/user submituser
+
+      - name: Diagnose asimov.pipelines entry-point discovery as submituser
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: |
+            python3 -c "
+            from importlib.metadata import entry_points
+            eps = [ep for ep in entry_points(group='asimov.pipelines') if ep.value.startswith('asimov_lalinference')]
+            print('Discovered asimov_lalinference entry points:', eps)
+            for ep in eps:
+                try:
+                    ep.load()
+                    print(f'  {ep.name}: loaded OK')
+                except Exception as e:
+                    print(f'  {ep.name}: FAILED TO LOAD: {e!r}')
+            "
+
+      - name: Apply fake event
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: |
+            cd e2e_project
+            asimov apply -f "$GITHUB_WORKSPACE/tests/test_blueprints/fake_event.yaml"
+
+      # LALInference needs no fake upstream pipeline (unlike PESummary, which
+      # needs a fake sample-producing analysis to post-process): it runs
+      # against its own built-in simulated ("fake-cache") Gaussian noise, so
+      # the production under test is entirely self-contained. What it *does*
+      # need is a real, working `lalinference_pipe` ini and a GPS time file,
+      # both seeded directly into the event repository -- exactly the
+      # "pre-seed a real .ini" alternative from the e2e-testing howto, rather
+      # than exercising asimov_lalinference's config_template Liquid
+      # rendering (which is covered separately by tests/test_lalinference.py).
+      # These settings (single detector, fake-cache noise, nlive=64,
+      # tolerance=5.0, IMRPhenomPv2pseudoFourPN) were hand-validated by
+      # running lalinference_pipe/lalinference_nest/lalinference_nest2pos
+      # directly (see the task notes) before being wired into asimov: the
+      # full engine+merge completes in well under a minute.
+      - name: Seed the LALInference ini and GPS time file fixtures
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: |
+            cd e2e_project/checkouts/FAKE_LALINFERENCE_TEST_EVENT
+            mkdir -p analyses
+            echo "1126259462.4" > analyses/gpsTime.txt
+            cat > analyses/lalinference-nest.ini << EOF
+            [analysis]
+            ifos=['H1']
+            engine=lalinferencenest
+            nparallel=1
+            coherence-test=False
+            upload-to-gracedb=False
+            singularity=False
+            osg=False
+            roq=False
+
+            [paths]
+            webdir=${GITHUB_WORKSPACE}/e2e_project/pages/FAKE_LALINFERENCE_TEST_EVENT/lalinference-nest
+
+            [input]
+            max-psd-length=1024
+            padding=16
+            events=all
+            analyse-all-time=False
+            timeslides=False
+            ignore-gracedb-psd=True
+            ignore-state-vector=True
+            threshold-snr=3
+
+            [condor]
+            lalsuite-install=${CONDA_PREFIX}
+            datafind=%(lalsuite-install)s/bin/gw_data_find
+            mergeNSscript=%(lalsuite-install)s/bin/lalinference_nest2pos
+            mergeMCMCscript=%(lalsuite-install)s/bin/cbcBayesMCMC2pos
+            combinePTMCMCh5script=%(lalsuite-install)s/bin/cbcBayesCombinePTMCMCh5s
+            resultspage=%(lalsuite-install)s/bin/cbcBayesPostProc
+            segfind=%(lalsuite-install)s/bin/ligolw_segment_query
+            ligolw_print=%(lalsuite-install)s/bin/ligolw_print
+            coherencetest=%(lalsuite-install)s/bin/lalinference_coherence_test
+            lalinferencenest=%(lalsuite-install)s/bin/lalinference_nest
+            lalinferencemcmc=%(lalsuite-install)s/bin/lalinference_mcmc
+            lalinferencebambi=%(lalsuite-install)s/bin/lalinference_bambi
+            lalinferencedatadump=%(lalsuite-install)s/bin/lalinference_datadump
+            ligo-skymap-from-samples=%(lalsuite-install)s/bin/ligo-skymap-from-samples
+            ligo-skymap-plot=%(lalsuite-install)s/bin/ligo-skymap-plot
+            computeroqweights=%(lalsuite-install)s/bin/lalinference_compute_roq_weights
+            mpirun=%(lalsuite-install)s/bin/mpirun
+            mpiwrapper=%(lalsuite-install)s/bin/lalinference_mpi_wrapper
+            gracedb=/bin/true
+            accounting_group=ligo.dev.o4.cbc.pe.lalinference
+            accounting_group_user=submituser
+
+            [datafind]
+            url-type=file
+            types={'H1':'LALSimAdLIGO'}
+
+            [data]
+            channels={'H1':'H1:FAKE-STRAIN'}
+
+            [lalinference]
+            fake-cache={'H1':'LALSimAdLIGO'}
+            flow={'H1':40}
+            dataseed=1234
+
+            [engine]
+            nlive=64
+            srate=1024
+            seglen=4
+            fref=100
+            approx=IMRPhenomPv2pseudoFourPN
+            amporder=0
+            margphi=
+            tolerance=5.0
+            progress=
+            resume=
+
+            [resultspage]
+            skyres=5.0
+
+            [skyarea]
+            maxpts=50
+
+            [ligo-skymap-from-samples]
+            enable-multiresolution=
+
+            [ligo-skymap-plot]
+            annotate=
+            contour= 50 90
+            EOF
+            git add analyses/gpsTime.txt analyses/lalinference-nest.ini
+            git commit -m "Seed LALInference ini and GPS time file fixtures"
+
+      - name: Add and build the real LALInference production
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: |
+            cd e2e_project
+            asimov apply -f "$GITHUB_WORKSPACE/tests/test_blueprints/lalinference_production.yaml" -e FAKE_LALINFERENCE_TEST_EVENT
+            asimov manage build submit
+
+      - name: Inspect the generated DAG
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: |
+            cd e2e_project
+            find working/FAKE_LALINFERENCE_TEST_EVENT/lalinference-nest -maxdepth 1
+            echo "--- multidag.dag ---"
+            cat working/FAKE_LALINFERENCE_TEST_EVENT/lalinference-nest/multidag.dag
+            # The top-level DAG should genuinely be a SUBDAG EXTERNAL wrapping
+            # a real lalinference_pipe-generated sub-DAG (engine -> merge ->
+            # resultspage/skymap), not a stub.
+            grep -q "SUBDAG EXTERNAL" working/FAKE_LALINFERENCE_TEST_EVENT/lalinference-nest/multidag.dag
+
+      # This is the real completion criterion asimov_lalinference's
+      # detect_completion() checks for -- not a smoke-test proxy. Reaching it
+      # means lalinference_pipe genuinely built a working DAG, HTCondor
+      # genuinely ran it (engine -> merge, a real nested-sampling run against
+      # simulated noise), and the merge step produced a real, parseable
+      # posterior file.
+      - name: Wait for real posterior samples
+        uses: etive-io/actions/wait-for-files@v1
+        with:
+          patterns: "posterior_*.hdf5"
+          directory: "working/FAKE_LALINFERENCE_TEST_EVENT/lalinference-nest/posterior_samples"
+          timeout: "600"
+          interval: "10"
+          working-directory: "e2e_project"
+
+      - name: Run asimov monitor for the LALInference production
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: cd e2e_project && asimov monitor
+
+      - name: Verify the posterior file is genuinely readable
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: |
+            cd e2e_project
+            python3 -c "
+            import glob
+            import h5py
+            paths = glob.glob('working/FAKE_LALINFERENCE_TEST_EVENT/lalinference-nest/posterior_samples/posterior_*.hdf5')
+            assert paths, 'No posterior samples file found'
+            with h5py.File(paths[0], 'r') as f:
+                assert len(f.keys()) > 0, 'Posterior file has no top-level groups'
+                print('Posterior file groups:', list(f.keys()))
+            "
+
+      # This is the regression check for the actual bug this plugin fixes:
+      # `after_completion()` used to call a `run_pesummary()` method that has
+      # never existed, so it crashed with an opaque AttributeError as soon as
+      # a job completed (masked in the old core CI by continue-on-error).
+      # asimov-pesummary is deliberately *not* installed in this job, so
+      # after_completion() should now hit its "plugin not installed" branch
+      # and raise a clear PipelineException -- which asimov's monitor loop
+      # catches per-analysis (see asimov.monitor_helpers.monitor_analysis)
+      # and reports without crashing the whole `asimov monitor` command.
+      - name: Confirm asimov considers the production finished and the
+          post-processing hand-off fails cleanly (asimov-pesummary not installed)
+        uses: etive-io/actions/run-asimov-command@v1
+        with:
+          script: |
+            cd e2e_project
+            asimov monitor | tee monitor_output.txt
+            grep -qi "lalinference-nest" monitor_output.txt
+            if grep -qi "run_pesummary\|AttributeError" monitor_output.txt; then
+              echo "::error::Found the old run_pesummary()/AttributeError bug in monitor output"
+              exit 1
+            fi
+            grep -qi "requires the asimov-pesummary plugin" monitor_output.txt
+
+      - name: Archive artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-debug
+          path: |
+            e2e_project/.asimov/
+            e2e_project/working/
+            e2e_project/checkouts/
+            e2e_project/pages/
+          retention-days: 5

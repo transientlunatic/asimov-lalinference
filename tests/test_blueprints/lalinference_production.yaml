@@ -1,0 +1,17 @@
+# Test blueprint for the real LALInference production under test. Its own
+# .ini is *not* generated from asimov_lalinference's bundled config_template
+# via this blueprint's metadata -- it is pre-seeded directly into the test
+# event's git repository (see e2e.yml's "Seed the LALInference ini fixture"
+# step) as a real, hand-validated `lalinference_pipe` config using LALInference's
+# built-in simulated ("fake-cache") Gaussian noise and deliberately reduced
+# sampler settings (nlive=64, tolerance=5.0), so the whole DAG -- engine,
+# merge, resultspage -- completes for real in well under a minute rather
+# than requiring real strain data or a full-precision (nlive~2048) run.
+#
+# The config_template/priors-interface rendering path is exercised
+# separately by tests/test_lalinference.py, not by this e2e test.
+kind: analysis
+name: lalinference-nest
+pipeline: lalinference
+comment: LALInference end-to-end test production (simulated noise, reduced settings)
+status: ready
