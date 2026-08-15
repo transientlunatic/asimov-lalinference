@@ -29,7 +29,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Natural Language :: English",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "asimov>=0.7",
 ]
@@ -52,10 +52,13 @@ test = [
 lalinference = "asimov_lalinference:LALInference"
 
 [project.urls]
-"Source code" = "https://git.ligo.org/asimov/asimov-lalinference"
+"Source code" = "https://github.com/transientlunatic/asimov-lalinference"
 
 [tool.setuptools]
 packages = ["asimov_lalinference"]
+
+[tool.setuptools.package-data]
+asimov_lalinference = ["configs/*.ini"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
