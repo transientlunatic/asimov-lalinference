@@ -126,8 +126,16 @@ jobs:
             osg=False
             roq=False
 
+            # lalinference_pipe always constructs a GraceDBJob while building the
+            # DAG (regardless of whether GraceDB upload is actually used), and its
+            # constructor eagerly calls guess_url(webdir) to compute a "baseurl".
+            # That function special-cases any path containing "public_html/" (or
+            # WWW/, www_html/); everything else falls back to splitting the path
+            # on $USER, which raises ValueError in CI since webdir here has no
+            # relation to the submituser home directory. Keep "public_html/" in
+            # the path to take the safe branch rather than depend on $USER.
             [paths]
-            webdir=${GITHUB_WORKSPACE}/e2e_project/pages/FAKE_LALINFERENCE_TEST_EVENT/lalinference-nest
+            webdir=${GITHUB_WORKSPACE}/e2e_project/public_html/FAKE_LALINFERENCE_TEST_EVENT/lalinference-nest
 
             [input]
             max-psd-length=1024
