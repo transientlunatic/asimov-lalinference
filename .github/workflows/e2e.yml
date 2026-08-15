@@ -116,6 +116,13 @@ jobs:
             mkdir -p analyses
             echo "1126259462.4" > analyses/gpsTime.txt
             cat > analyses/lalinference-nest.ini << EOF
+            # dataseed must live here, in [analysis] -- lalinference_pipe_utils.py
+            # only ever reads it via cp.has_option('analysis', 'dataseed'). A
+            # [lalinference] dataseed (a plausible-looking but wrong location)
+            # is silently ignored, so the generated engine job never gets
+            # --dataseed on its command line at all; lalinference_nest then
+            # refuses to run when generating fake ("--H1-cache LALSimAdLIGO")
+            # data without one ("You need to specify a dataseed...").
             [analysis]
             ifos=['H1']
             engine=lalinferencenest
@@ -125,6 +132,7 @@ jobs:
             singularity=False
             osg=False
             roq=False
+            dataseed=1234
 
             # lalinference_pipe always constructs a GraceDBJob while building the
             # DAG (regardless of whether GraceDB upload is actually used), and its
@@ -180,7 +188,6 @@ jobs:
             [lalinference]
             fake-cache={'H1':'LALSimAdLIGO'}
             flow={'H1':40}
-            dataseed=1234
 
             [engine]
             nlive=64
