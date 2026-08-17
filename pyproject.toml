@@ -32,6 +32,16 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "asimov>=0.7.0a2",
+    # The current conda-forge `lalinference` build's bundled
+    # lalinference/nest2pos.py (used by lalinference_nest2pos, the merge
+    # step of every LALInference run) still calls the removed np.NINF
+    # API, so it crashes under numpy>=2. This is a real runtime
+    # requirement for anyone actually running LALInference jobs via this
+    # plugin, not just a CI-only constraint -- confirmed by hitting
+    # AttributeError: `np.NINF` was removed in the NumPy 2.0 release
+    # against a real e2e run. Revisit once conda-forge ships a
+    # lalinference build that no longer needs this.
+    "numpy<2",
 ]
 
 [project.optional-dependencies]

@@ -59,6 +59,30 @@ See the [documentation](docs/index.rst) for a full example blueprint.
   (there is no `asimov[gw]` extra in asimov core today that would pull this in automatically;
   each GW pipeline plugin, including this one, currently needs to be installed explicitly)
 
+## Operational notes
+
+### HTCondor pools without an IGWN-style job wrapper
+
+`lalinference_pipe` generates a small `lalinf_touch_output` placeholder script per engine
+node and wires it in via custom `+PreCmd`/`+PreArguments` job classads, so that any
+declared output file the real executable doesn't happen to write for a given run (e.g. the
+SNR summary file, which isn't always produced) still exists as an empty placeholder by the
+time HTCondor transfers job outputs — otherwise the transfer hard-fails with something like:
+
+```
+Transfer output files failure ... Details: 1 total failures: first failure: reading from
+file .../lalinferencenest-...-1.hdf5_snr.txt: (errno 2) No such file or directory
+```
+
+`+`-prefixed classads aren't a native HTCondor pre-exec hook — real IGWN/LIGO condor pools
+apparently have a `USER_JOB_WRAPPER` configured site-wide that interprets this convention,
+but a vanilla HTCondor install (e.g. the `htcondor/mini` test image this repo's own CI uses,
+or your own self-hosted pool) does not, and `lalinf_touch_output` silently never runs. If
+you hit the error above on a pool you control, configure a `USER_JOB_WRAPPER` that reads
+`PreCmd`/`PreArguments` off the job ad (available via the `$_CONDOR_JOB_AD` file HTCondor
+provides to every job) and runs it before the real executable — see
+`.github/workflows/e2e.yml` in this repo for a working example.
+
 ## License
 
 MIT License - see LICENSE file for details.

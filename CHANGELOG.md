@@ -50,6 +50,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `build_dag()` now resolves `production.rundir` to an absolute path before changing the
   working directory, and raises a clear `PipelineException` (rather than an uncaught
   `FileNotFoundError`) if `lalinference_pipe` can't be found
+- `submit_dag()` called `os.chdir(self.production.rundir)` before entering
+  `with set_directory(self.production.rundir):`. `set_directory` saves the working
+  directory on entry and restores it on exit -- but since the preceding manual `chdir`
+  had already moved into `rundir`, "on entry" was already `rundir`, so the process was
+  left there after `submit_dag()` returned instead of back at the project root. This
+  broke asimov's own post-submit job-cache refresh, which expects to still be at the
+  project root
+- Pinned `numpy<2`: the current conda-forge `lalinference` build's bundled
+  `lalinference/nest2pos.py` (used by `lalinference_nest2pos`, the merge step of every
+  LALInference run) still calls the removed `np.NINF` API and crashes under numpy 2.x.
+  This is a real runtime requirement, not just a CI constraint -- installing this plugin
+  via pip alongside an unpinned `lalinference` conda environment can silently upgrade
+  numpy past what `lalinference` itself needs
 - Updated dependency constraint to support asimov 0.7
 
 ## [0.1.0] - TBD
