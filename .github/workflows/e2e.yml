@@ -108,6 +108,21 @@ jobs:
       # running lalinference_pipe/lalinference_nest/lalinference_nest2pos
       # directly (see the task notes) before being wired into asimov: the
       # full engine+merge completes in well under a minute.
+      #
+      # Deliberately no `resume=` here (unlike the package's own bundled
+      # production template, asimov_lalinference/configs/lalinference.ini,
+      # which keeps it). `resume` makes lalinference_pipe_utils.py add
+      # `--checkpoint-exit-code 77` plus `+SuccessCheckpointExitCode`/
+      # `+WantFTOnCheckpoint` to the engine .sub file, which makes
+      # lalinference_nest voluntarily self-checkpoint-and-exit(77)
+      # periodically -- and HTCondor then requires the *full* final
+      # transfer_output_files set (including an SNR summary file only
+      # written at true convergence) to exist at that checkpoint moment,
+      # which it doesn't yet. On htcondor/mini this reliably holds the job
+      # with a "Transfer output files failure" long before it converges.
+      # Resumability across preemption matters for real multi-day
+      # production runs, not a single-minute CI smoke run, so it's simply
+      # not worth the complexity here.
       - name: Seed the LALInference ini and GPS time file fixtures
         uses: etive-io/actions/run-asimov-command@v1
         with:
@@ -199,7 +214,6 @@ jobs:
             margphi=
             tolerance=5.0
             progress=
-            resume=
 
             [resultspage]
             skyres=5.0
