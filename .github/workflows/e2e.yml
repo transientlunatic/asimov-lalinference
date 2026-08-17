@@ -26,6 +26,40 @@ jobs:
         with:
           fetch-depth: 0
 
+      # lalinference_pipe generates a `lalinf_touch_output` script per engine
+      # node (transferred in as a job input) and wires it in via the custom
+      # `+PreCmd`/`+PreArguments` job classads -- its only job is to `touch`
+      # placeholder copies of every declared transfer_output_files entry
+      # before the real executable runs, so a file the executable doesn't
+      # always write (e.g. the SNR summary, which lalinference_nest only
+      # writes for certain run outcomes) still exists for HTCondor's
+      # exit-time file transfer to find. `+`-prefixed classads aren't a
+      # native HTCondor pre-exec hook -- IGWN's real condor pools apparently
+      # have a USER_JOB_WRAPPER configured that interprets this convention,
+      # but vanilla htcondor/mini doesn't, so lalinf_touch_output silently
+      # never runs there and the transfer hard-fails on the missing file
+      # ("Transfer output files failure ... No such file or directory").
+      # This step configures an equivalent wrapper before HTCondor starts.
+      - name: Configure USER_JOB_WRAPPER to honour lalinference_pipe's PreCmd/PreArguments convention
+        run: |
+          mkdir -p /etc/condor/config.d
+          cat > /usr/local/bin/condor-lalinference-job-wrapper.sh << 'WRAPPEREOF'
+          #!/bin/bash
+          set -e
+          if [ -n "${_CONDOR_JOB_AD:-}" ] && [ -f "${_CONDOR_JOB_AD}" ]; then
+            PRECMD=$(sed -n 's/^PreCmd = "\(.*\)"$/\1/p' "${_CONDOR_JOB_AD}")
+            PREARGS=$(sed -n 's/^PreArguments = "\(.*\)"$/\1/p' "${_CONDOR_JOB_AD}")
+            if [ -n "$PRECMD" ] && [ -x "./$PRECMD" ]; then
+              "./$PRECMD" $PREARGS
+            fi
+          fi
+          exec "$@"
+          WRAPPEREOF
+          chmod +x /usr/local/bin/condor-lalinference-job-wrapper.sh
+          cat > /etc/condor/config.d/15-lalinference-job-wrapper.conf << 'CONFEOF'
+          USER_JOB_WRAPPER = /usr/local/bin/condor-lalinference-job-wrapper.sh
+          CONFEOF
+
       - uses: etive-io/actions/setup-htcondor@v1
 
       - name: Install base tools
